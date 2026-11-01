@@ -251,9 +251,9 @@ export function PdfViewer({ jobId, artifact, initialPage = 1 }: {
       </>}
     </form>
     {searchMessage && <p className="pdf-search-note" role="status">{searchMessage}{searchHits[searchIndex] ? ` …${searchHits[searchIndex].context}…` : ''}</p>}
-    <p className="pdf-page-note">第 {page} 页，共 {numPages || '—'} 页；页码从 1 开始，对应 PDF 物理页。</p>
+    <p className="pdf-page-note">第 {page} 页，共 {numPages || '—'} 页</p>
     <div className="pdf-stage" ref={stageRef}>
-      {loadingDocument && <div className="pdf-loading" aria-live="polite"><LoaderCircle size={18} className="spin"/><span>正在通过桌面安全接口读取 PDF…</span></div>}
+      {loadingDocument && <div className="pdf-loading" aria-live="polite"><LoaderCircle size={18} className="spin"/><span>正在读取 PDF…</span></div>}
       {error && <div className="pdf-unavailable" role="alert"><FileWarning size={20}/><strong>PDF 原文不可读</strong><p>{error}</p><p>请尝试在次级菜单中在外部打开或下载该 PDF。</p></div>}
       {document && !error && <>
         <canvas ref={canvasRef} className={`pdf-canvas${renderingPage ? ' is-rendering' : ''}`}/>

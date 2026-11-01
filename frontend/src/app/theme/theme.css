@@ -222,6 +222,15 @@ body.is-resizing, body.is-resizing * { cursor: col-resize !important; user-selec
 .composer-options, .send-actions { display: flex; align-items: center; gap: 9px; }
 .composer-options label { display: flex; align-items: center; gap: 5px; color: var(--ink-muted); font-size: 10px; }
 .composer-options select { max-width: 104px; padding: 4px 17px 4px 5px; border: 0; border-radius: 5px; color: var(--ink-soft); background-color: transparent; font-size: 10px; cursor: pointer; }
+.composer-options { flex-wrap: wrap; }
+.composer-options .parallel-option { min-height: 30px; gap: 6px; cursor: pointer; }
+.parallel-option input { appearance: none; position: relative; flex: 0 0 auto; width: 28px; height: 16px; margin: 0; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--surface-sunken); cursor: pointer; transition: background-color var(--motion-fast) var(--ease-standard); }
+.parallel-option input::after { content: ''; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--ink-muted); transition: transform var(--motion-fast) var(--ease-standard); }
+.parallel-option input:checked { border-color: var(--accent-dark); background: var(--accent-dark); }
+.parallel-option input:checked::after { background: var(--on-accent); transform: translateX(12px); }
+.parallel-option input:hover:not(:disabled) { border-color: var(--accent); }
+.parallel-option:has(input:disabled) { opacity: .5; cursor: not-allowed; }
+.parallel-option input:disabled { cursor: not-allowed; }
 .option-separator { width: 1px; height: 15px; background: var(--line); }
 .key-needed { display: inline-flex; align-items: center; gap: 5px; color: var(--warning-ink); font-size: 9px; }
 .send-message { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 9px; color: white; background: var(--accent-dark); cursor: pointer; transition: background-color var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-standard); }
@@ -378,6 +387,23 @@ body.is-resizing, body.is-resizing * { cursor: col-resize !important; user-selec
 .file-name { max-width: 100%; overflow: hidden; color: var(--ink-faint); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .file-confirmation { overflow-wrap: anywhere; }
 .activity-view, .settings-view, .metrics-view { padding: 0 0 20px; }
+.task-metrics-question { margin: 0 16px 20px; color: var(--ink-soft); font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
+.task-runtime, .task-ranking { margin: 0 16px 24px; }
+.task-metrics-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.task-metrics-heading h3 { margin: 0; color: var(--ink); font-size: 13px; font-weight: 600; }
+.task-metrics-heading > span, .task-metrics-heading > strong { color: var(--ink-soft); font-size: 12px; font-variant-numeric: tabular-nums; }
+.task-runtime dl { margin: 0; }
+.task-runtime dl > div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line-soft); color: var(--ink-soft); font-size: 12px; }
+.task-runtime dd { margin: 0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.task-metrics-note { margin: 10px 16px 16px; color: var(--ink-muted); font-size: 12px; line-height: 1.6; }
+.task-runtime .task-metrics-note { margin-inline: 0; }
+.task-ranking-table { width: 100%; table-layout: fixed; border-collapse: collapse; color: var(--ink-soft); font-size: 12px; }
+.task-ranking-table th, .task-ranking-table td { padding: 9px 5px; border-bottom: 1px solid var(--line-soft); text-align: left; vertical-align: top; }
+.task-ranking-table th { color: var(--ink-muted); font-weight: 500; }
+.task-ranking-table th:first-child { width: 38px; }
+.task-ranking-table th:last-child, .task-ranking-table td:last-child { width: 62px; text-align: right; font-variant-numeric: tabular-nums; }
+.task-ranking-table button { padding: 0; border: 0; background: transparent; color: var(--ink); font: inherit; text-align: left; line-height: 1.6; overflow-wrap: anywhere; cursor: pointer; }
+.task-ranking-table button:hover { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 3px; }
 .job-facts { display: grid; gap: 8px; margin: 0 15px 13px; padding: 10px; border: 1px solid var(--line-soft); border-radius: 7px; background: var(--surface-soft); }
 .job-facts span { min-width: 0; display: flex; align-items: baseline; justify-content: space-between; gap: 10px; color: var(--ink-soft); font-size: 9px; }
 .job-facts small { color: var(--ink-faint); font-size: 9px; }

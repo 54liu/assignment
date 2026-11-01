@@ -37,7 +37,7 @@ const initialState: WorkspaceState = {
   activeJob: null,
   resultJob: null,
   action: 'research',
-  executionMode: 'auto',
+  executionMode: 'sequential',
   topK: 5,
   drafts: {},
   sending: false,
@@ -260,7 +260,7 @@ export const workspaceStore = {
     update({ action });
   },
   setExecutionMode(executionMode: ExecutionMode): void {
-    update({ executionMode });
+    update({ executionMode: requestedExecutionMode(executionMode) });
   },
   setTopK(topK: number): void {
     if (Number.isInteger(topK) && topK >= 1 && topK <= 15) update({ topK });
@@ -282,7 +282,7 @@ export const workspaceStore = {
     update({ notice: null });
   },
   updateConfig(config: PublicConfig): void {
-    update({ config, topK: config.default_top_k, executionMode: requestedExecutionMode(config.default_execution_mode), error: null, notice: '设置已保存。保存设置不会启动研究或模型请求。' });
+    update({ config, topK: config.default_top_k, error: null, notice: '设置已保存。保存设置不会启动研究或模型请求。' });
   },
   newConversation(): void {
     selectionSequence += 1;

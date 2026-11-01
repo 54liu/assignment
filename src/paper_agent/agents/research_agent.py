@@ -2007,9 +2007,8 @@ async def summarize_paper(
                 "methods", "experiments", "findings", "limitations", "author_claims",
                 "system_inferences", "speculative_ideas",
             ):
-                setattr(merged, field, _unique([
-                    *getattr(merged, field), *getattr(retained_notes, field),
-                ]))
+                values = [*getattr(merged, field), *getattr(retained_notes, field)]
+                setattr(merged, field, _unique_findings(values) if field == "findings" else _unique(values))
             if not merged.research_question.strip():
                 merged.research_question = retained_notes.research_question
             if not merged.core_idea.strip():
@@ -2431,6 +2430,22 @@ def _public_finding_statement(text: str) -> str:
     return re.sub(r"\s+", " ", without_citations).strip(" ，,；;")
 
 
+def _finding_dedupe_key(text: str) -> str:
+    core = re.sub(r"^作者(?:报告|指出|称)", "", _finding_core(text))
+    return re.sub(r"\s+", "", core).strip("。.!！;；")
+
+
+def _unique_findings(values: list[str]) -> list[str]:
+    # Ignore only citation/spacing/attribution variants, preserving numbers,
+    # conditions and negations. Raw chunk notes remain available for inspection.
+    unique: dict[str, str] = {}
+    for value in values:
+        key = _finding_dedupe_key(value)
+        if key:
+            unique.setdefault(key, value)
+    return list(unique.values())
+
+
 def _support_units(text: str) -> set[str]:
     core = _finding_core(text)
     english = set(re.findall(r"[a-z0-9]+", core))
@@ -2582,7 +2597,7 @@ def build_research_brief(
                 "该论文的总结陈述缺少可关联的实际证据引用。",
                 "相关陈述未纳入关键结论。", [summary.paper_id],
             )
-        paper_findings = _unique(summary.findings)
+        paper_findings = _unique_findings(summary.findings)
         matches = []
         for statement in paper_findings:
             evidence = _best_supporting_evidence(

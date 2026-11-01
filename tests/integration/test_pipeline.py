@@ -137,7 +137,69 @@ def test_partial_documents_do_not_complete(tmp_path):
     assert result.status == "partial"
     assert result.metrics["fulltext_count"] == 0
     assert result.metrics["processing_complete"] is False
-    assert len(result.metrics["attempted_paper_ids"]) == 18
+    assert len(result.metrics["attempted_paper_ids"]) == 3
+    assert result.metrics["pdf_acquired_count"] == 3
+    assert result.metrics["replacement_attempts"] == []
+
+
+def test_pdf_replacement_follows_rank_without_preferring_url_or_target(tmp_path):
+    attempted = []
+
+    async def download(paper, *, settings):
+        attempted.append(paper.paper_id)
+        if paper.paper_id in {"demo:001", "demo:004"}:
+            result = paper.model_copy(deep=True)
+            result.status = "download_failed"
+            return result
+        return await prepare_demo_paper(paper, settings=settings)
+
+    async def scenario():
+        pipeline = ResearchPipeline(settings_for(tmp_path), download_fn=download)
+        run = await pipeline.search_papers("agent memory", 3)
+        run = await pipeline.select_top_k_papers(run.run_id)
+        # A later candidate has both a PDF URL and a target match. Neither
+        # should move it ahead of the next ranked candidate.
+        for paper in run.papers:
+            if paper.paper_id == "demo:006":
+                paper.pdf_url = "https://example.invalid/later.pdf"
+        run.metrics["target_coverage"] = {
+            "targets": [{"target": "fixture", "direct_title_paper_ids": ["demo:006"]}],
+        }
+        pipeline.store.save(run)
+        return await pipeline.prepare_fulltexts(run.run_id)
+
+    result = asyncio.run(scenario())
+    assert attempted == ["demo:001", "demo:002", "demo:003", "demo:004", "demo:005"]
+    assert result.metrics["analysis_paper_ids"] == ["demo:002", "demo:003", "demo:005"]
+    assert result.metrics["replacements"] == [
+        {"original_paper_id": "demo:001", "replacement_paper_id": "demo:005"},
+    ]
+    assert result.selected_papers[0].paper_id == "demo:001"
+
+
+def test_pdf_with_failed_markdown_conversion_keeps_its_slot(tmp_path):
+    async def failed_conversion(paper, *, settings):
+        result = paper.model_copy(deep=True)
+        result.status = "conversion_failed"
+        result.markdown_path = None
+        result.page_map = []
+        result.fulltext_quality = {"complete": False}
+        result.errors.append(ErrorInfo(code="conversion_failed", message="Fixture conversion failure", stage="conversion"))
+        return result
+
+    async def scenario():
+        pipeline = ResearchPipeline(settings_for(tmp_path), convert_fn=failed_conversion)
+        run = await pipeline.search_papers("agent memory", 3)
+        run = await pipeline.select_top_k_papers(run.run_id)
+        return await pipeline.prepare_fulltexts(run.run_id)
+
+    result = asyncio.run(scenario())
+    assert result.metrics["pdf_acquired_count"] == 3
+    assert result.metrics["fulltext_count"] == 0
+    assert result.metrics["partial_fulltext_count"] == 0
+    assert result.metrics["replacement_attempts"] == []
+    assert result.metrics["analysis_paper_ids"] == ["demo:001", "demo:002", "demo:003"]
+    assert all(paper.errors for paper in result.papers[:3])
 
 
 def test_concurrency_is_bounded_and_candidate_order_stable(tmp_path):

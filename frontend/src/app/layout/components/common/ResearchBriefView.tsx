@@ -5,8 +5,6 @@ import {
   deliveryStatusFor,
   deliveryStatusLabels,
   deliveryStatusNotes,
-  groupBriefLimitations,
-  primaryBriefLimitations,
   reportArtifactFor,
   supportedFindings,
 } from '../../../utils/researchBrief';
@@ -34,11 +32,6 @@ export function ResearchBriefView({ result, job }: { result: PipelineResult; job
   const stateNote = delivery
     ? deliveryStatusNotes[delivery]
     : '这条旧记录没有保存交付分类；请结合实际总结范围和限制阅读。';
-  const limitationGroups = groupBriefLimitations(brief?.limitations ?? []);
-  const primaryLimitations = primaryBriefLimitations(limitationGroups);
-  const allReadableLimitations = [...limitationGroups.material, ...limitationGroups.research];
-  const remainingLimitations = allReadableLimitations.filter(item => !primaryLimitations.includes(item));
-  const hasLimitations = primaryLimitations.length > 0;
 
   return <section className={`research-brief delivery-${delivery ?? 'legacy'}`} aria-label="研究简报">
     <header className="brief-header">
@@ -81,14 +74,5 @@ export function ResearchBriefView({ result, job }: { result: PipelineResult; job
       <FileText size={16}/><span>阅读完整研究报告</span><ArrowRight size={15}/>
     </button>}
 
-    {hasLimitations && <section className="brief-limitations" aria-label="影响阅读的限制">
-      <div className="brief-limitations-head"><h3>影响理解的限制</h3><span>{allReadableLimitations.length} 条</span></div>
-      <ul>{primaryLimitations.map((item, index) => <li key={`primary:${index}:${item.description}`}><strong>{item.description}</strong>{item.impact && <p>{item.impact}</p>}</li>)}</ul>
-      {remainingLimitations.length > 0 && <details>
-        <summary>查看其余限制（{remainingLimitations.length}）</summary>
-        <ul>{remainingLimitations.map((item, index) => <li key={`more:${index}:${item.description}`}><strong>{item.description}</strong>{item.impact && <p>{item.impact}</p>}</li>)}</ul>
-      </details>}
-      <button className="inline-link-button" type="button" onClick={() => layoutStore.openPanel('activity')}>处理细节与执行记录</button>
-    </section>}
   </section>;
 }

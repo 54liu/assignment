@@ -18,13 +18,13 @@ import httpx
 
 from paper_agent.agents.research_agent import build_research_brief, generate_report, summarize_paper
 from paper_agent.agents.selector_agent import select_top_k
-from paper_agent.config import Settings
+from paper_agent.config import SELECTOR_CANDIDATE_LIMIT, Settings
 from paper_agent.llm_client import ChatClient
 from paper_agent.models import ErrorInfo, Paper, PaperSummary, PipelineResult, StageTiming
+from paper_agent.services.author_keywords import enrich_cached_author_keywords
 from paper_agent.services.downloader import download_pdf
 from paper_agent.services.pdf_converter import convert_pdf
 from paper_agent.services.retrieval import (
-    build_bounded_candidate_pool,
     build_source_queries,
     match_explicit_targets,
     merge_dedupe_rank,
@@ -155,8 +155,6 @@ class ResearchPipeline:
 
     def _new(self, idea: str, k: int, query: str) -> PipelineResult:
         self._validate(idea, k, query)
-        if self.settings.candidate_limit < k:
-            raise ValueError("候选上限必须覆盖 Top-k。")
         run = PipelineResult(idea=idea.strip(), query=query.strip(), top_k=k,
                              mode=self.settings.mode, execution_mode=self.settings.execution_mode)
         run.output_dir = str(self.store.directory(run.run_id))
@@ -291,36 +289,6 @@ class ResearchPipeline:
         )
         if run.metrics.get("report_valid") is not None:
             coverage["report_valid"] = bool(run.metrics["report_valid"])
-
-    @staticmethod
-    def _replacement_order(
-        remaining: list[Paper], coverage: dict[str, Any], complete_ids: set[str],
-        full_order: dict[str, int],
-    ) -> list[Paper]:
-        """Order bounded replacement attempts without changing the full pool."""
-        direct_all: set[str] = set()
-        uncovered_direct: set[str] = set()
-        for item in coverage.get("targets", []) if isinstance(coverage, dict) else []:
-            direct = {
-                paper_id for paper_id in item.get("direct_title_paper_ids", [])
-                if isinstance(paper_id, str)
-            }
-            direct_all |= direct
-            if not (direct & complete_ids):
-                uncovered_direct |= direct
-
-        def key(paper: Paper) -> tuple[int, int]:
-            if paper.paper_id in uncovered_direct:
-                bucket = 0
-            elif paper.paper_id in direct_all:
-                bucket = 1
-            elif paper.pdf_url or paper.pdf_urls:
-                bucket = 2
-            else:
-                bucket = 3
-            return bucket, full_order.get(paper.paper_id, len(full_order))
-
-        return sorted(remaining, key=key)
 
     async def _map(self, function: Callable, values: list[Any]):
         if self.settings.processing == "serial":
@@ -468,9 +436,12 @@ class ResearchPipeline:
         run.metrics["retrieved_count"] = sum(run.source_counts.values())
         run.metrics["unique_count"] = len(ranked)
         run.metrics["merged_count"] = len(ranked)
-        # Semantic fusion must see every deduplicated candidate. Truncation is
-        # deliberately applied only after the complete RRF order is known.
-        if self.settings.ranker == "semantic":
+        # Real semantic ranking sees every deduplicated candidate. Offline demo
+        # fixtures do not load an embedding model.
+        if self.settings.ranker == "semantic" and run.mode != "demo":
+            ranked = await asyncio.to_thread(
+                enrich_cached_author_keywords, ranked, self.settings.pdf_dir,
+            )
             self.store.event(run.run_id, "semantic_ranker", event="start",
                              requested_ranker="semantic", candidate_count=len(ranked))
             ranked, ranking_audit = await semantic_rerank(ranking_query, ranked)
@@ -492,8 +463,7 @@ class ResearchPipeline:
                 "candidate_count": len(ranked), "encoded_count": 0, "cache_hits": 0,
                 "duration_seconds": 0.0,
             }
-        # The complete ordered pool stays on the run for bounded replacements.
-        # Only a separate copy is bounded for the Selector request.
+        # Keep all ranked candidates for PDF fallback; only the first 20 go to the Agent.
         full_ranked = ranked
         coverage = match_explicit_targets(targets, full_ranked) if targets else {}
         if coverage:
@@ -534,10 +504,8 @@ class ResearchPipeline:
                         "direct_title": direct, "related_title": related,
                         "abstract_only": abstract,
                     }
-        selector_pool, pool_audit = build_bounded_candidate_pool(
-            full_ranked, k=run.top_k, merged_limit=self.settings.merged_candidate_limit,
-            candidate_limit=self.settings.candidate_limit, coverage=coverage,
-        )
+        selector_pool = full_ranked[:SELECTOR_CANDIDATE_LIMIT]
+        pool_audit = self._selector_candidate_pool(run, full_ranked)
         selector_ids = {paper.paper_id for paper in selector_pool}
         for item in coverage.get("targets", []):
             item["selector_pool_direct_paper_ids"] = [
@@ -550,9 +518,12 @@ class ResearchPipeline:
             ]
         coverage["selector_pool_ids"] = [paper.paper_id for paper in selector_pool]
         ranking_audit["candidate_count_before_truncation"] = len(full_ranked)
-        ranking_audit["candidate_count_after_truncation"] = pool_audit["merged_candidate_count"]
+        ranking_audit["candidate_count_after_truncation"] = len(selector_pool)
         ranking_audit["selector_input_count"] = len(selector_pool)
         ranking_audit["full_candidate_count"] = len(full_ranked)
+        ranking_audit["author_keyword_paper_count"] = sum(
+            bool(paper.metadata.get("author_keywords")) for paper in full_ranked
+        )
         run.metrics["ranking"] = ranking_audit
         run.papers = full_ranked
         run.metrics.update(
@@ -579,28 +550,22 @@ class ResearchPipeline:
             targets = [
                 value for value in coverage.get("explicit_targets", []) if isinstance(value, str)
             ]
-            by_id = {paper.paper_id: paper for paper in run.papers}
-            required = min(run.top_k, len(run.papers))
-            if self.settings.candidate_limit < required:
-                raise ValueError("候选上限不足以覆盖请求的 Top-k")
-            pool_ids = (run.metrics.get("candidate_pool") or {}).get("selector_pool_ids")
-            selector_pool: list[Paper] = []
-            if isinstance(pool_ids, list):
-                seen_pool: set[str] = set()
-                for paper_id in pool_ids:
-                    if isinstance(paper_id, str) and paper_id in by_id and paper_id not in seen_pool:
-                        seen_pool.add(paper_id)
-                        selector_pool.append(by_id[paper_id])
-            if len(selector_pool) < required:
-                selector_pool, pool_audit = build_bounded_candidate_pool(
-                    run.papers, k=run.top_k, merged_limit=self.settings.merged_candidate_limit,
-                    candidate_limit=self.settings.candidate_limit, coverage=coverage,
-                )
-                run.metrics["candidate_pool"] = pool_audit
-                run.metrics["downstream_candidate_count"] = len(selector_pool)
-            selector_pool = selector_pool[:self.settings.candidate_limit]
-            if len(selector_pool) < required:
-                raise ValueError("Selector 输入池不足以覆盖请求的 Top-k")
+            selector_pool = run.papers[:SELECTOR_CANDIDATE_LIMIT]
+            run.metrics["candidate_pool"] = self._selector_candidate_pool(run, run.papers)
+            run.metrics["downstream_candidate_count"] = len(selector_pool)
+            run.metrics.setdefault("ranking", {})["selector_input_count"] = len(selector_pool)
+            coverage["selector_pool_ids"] = [paper.paper_id for paper in selector_pool]
+            selector_ids = set(coverage["selector_pool_ids"])
+            for item in coverage.get("targets", []):
+                item["selector_pool_direct_paper_ids"] = [
+                    paper_id for paper_id in item.get("direct_title_paper_ids", [])
+                    if paper_id in selector_ids
+                ]
+                item["selector_pool_related_paper_ids"] = [
+                    paper_id for paper_id in item.get("related_title_paper_ids", [])
+                    if paper_id in selector_ids
+                ]
+            run.metrics["target_coverage"] = coverage
             self.store.event(run_id, "selector", event="start", agent="llm_selector",
                              synthetic=run.mode == "demo", candidate_count=len(selector_pool),
                              full_candidate_count=len(run.papers), explicit_targets=targets)
@@ -638,6 +603,21 @@ class ResearchPipeline:
                              selected_ids=[p.paper_id for p in run.selected_papers], status=run.status)
             return self._finish(run, "selection", start, before, successes=len(run.selected_papers))
 
+    def _selector_candidate_pool(self, run: PipelineResult, papers: list[Paper]) -> dict[str, Any]:
+        ids = [paper.paper_id for paper in papers[:SELECTOR_CANDIDATE_LIMIT]]
+        return {
+            "mode": "ranked_top_n", "requested_k": run.top_k,
+            "required_candidate_count": min(run.top_k, len(ids)),
+            "full_candidate_count": len(papers), "merged_candidate_count": len(papers),
+            "selector_input_count": len(ids), "base_pool_ids": ids,
+            "selector_pool_ids": ids, "target_protections": [],
+            "excluded_direct_paper_ids": [], "legacy_limits_applied": False,
+            "candidate_limit": SELECTOR_CANDIDATE_LIMIT,
+            "configured_candidate_limit": self.settings.candidate_limit,
+            "excluded_by_candidate_limit": [p.paper_id for p in papers[SELECTOR_CANDIDATE_LIMIT:]],
+            "merged_candidate_limit": self.settings.merged_candidate_limit,
+        }
+
     @staticmethod
     def _summary_has_content(summary: PaperSummary) -> bool:
         return bool(
@@ -672,6 +652,17 @@ class ResearchPipeline:
         return bool(paper.markdown_path and Path(paper.markdown_path).is_file()
                     and Path(paper.markdown_path).stat().st_size > 0 and paper.page_map)
 
+    @staticmethod
+    def _has_pdf(paper: Paper) -> bool:
+        """Acquisition is independent of Markdown conversion and analysis quality."""
+        if not paper.pdf_path:
+            return False
+        try:
+            with Path(paper.pdf_path).open("rb") as document:
+                return document.read(5) == b"%PDF-"
+        except OSError:
+            return False
+
     @classmethod
     def _complete(cls, paper: Paper) -> bool:
         return bool(cls._readable(paper) and paper.pdf_path and Path(paper.pdf_path).is_file()
@@ -690,14 +681,13 @@ class ResearchPipeline:
             attempt_order: list[str] = []
             coverage = run.metrics.get("target_coverage")
             coverage = coverage if isinstance(coverage, dict) else {}
-            full_order = {paper.paper_id: index for index, paper in enumerate(run.papers)}
 
             async def prepare(paper):
                 result = paper.model_copy(deep=True)
                 try:
                     async with self._download_gate:
                         result = await self.download(result, settings=self.settings)
-                    if result.pdf_path:
+                    if self._has_pdf(result):
                         async with self._convert_gate:
                             result = await self.convert(result, settings=self.settings)
                 except Exception as exc:
@@ -720,9 +710,9 @@ class ResearchPipeline:
             for result in initial:
                 attempted[result.paper_id] = result
                 attempt_order.append(result.paper_id)
-            complete = [p for p in initial if self._complete(p)]
-            complete_ids = {p.paper_id for p in complete}
-            unavailable = [p for p in initial if p.paper_id not in complete_ids]
+            acquired = [p for p in initial if self._has_pdf(p)]
+            acquired_ids = {p.paper_id for p in acquired}
+            unavailable = [p for p in initial if p.paper_id not in acquired_ids]
             slots = [p.paper_id for p in unavailable]
             filled_slots: set[str] = set()
             original_ids = {p.paper_id for p in run.selected_papers}
@@ -731,31 +721,32 @@ class ResearchPipeline:
             replacement_attempts: list[dict[str, Any]] = []
             replacement_budget = self.settings.max_fulltext_attempts or len(remaining)
             replacements_attempted = 0
-            while len(complete) < run.top_k and remaining and replacements_attempted < replacement_budget:
-                requested = min(run.top_k - len(complete), replacement_budget - replacements_attempted)
+            while len(acquired) < run.top_k and remaining and replacements_attempted < replacement_budget:
+                requested = min(run.top_k - len(acquired), replacement_budget - replacements_attempted)
                 if requested <= 0:
                     break
-                ordered = self._replacement_order(remaining, coverage, complete_ids, full_order)
-                batch = ordered[:requested]
+                # The persisted candidate order is the ranking order. Never jump
+                # ahead based on target hints, PDF URLs or conversion quality.
+                batch = remaining[:requested]
                 batch_ids = {paper.paper_id for paper in batch}
                 remaining = [paper for paper in remaining if paper.paper_id not in batch_ids]
                 replacements_attempted += len(batch)
                 for paper in await self._map(prepare, batch):
                     complete_flag = self._complete(paper)
                     readable = self._readable(paper)
+                    acquired_flag = self._has_pdf(paper)
                     original_id = next(
                         (slot for slot in slots if slot not in filled_slots), None
                     )
-                    if complete_flag:
-                        role = "replacement_complete"
+                    if acquired_flag:
+                        role = "replacement_complete" if complete_flag else "replacement_pdf"
                         if original_id is not None:
                             filled_slots.add(original_id)
                             replacements.append({
                                 "original_paper_id": original_id,
                                 "replacement_paper_id": paper.paper_id,
                             })
-                        complete.append(paper)
-                        complete_ids.add(paper.paper_id)
+                        acquired.append(paper)
                     else:
                         role = "replacement_partial" if readable else "replacement_failed"
                     paper.metadata["fulltext_provenance"] = {
@@ -773,6 +764,7 @@ class ResearchPipeline:
                         "original_paper_id": original_id,
                         "status": paper.status,
                         "complete": complete_flag,
+                        "pdf_acquired": acquired_flag,
                         "readable": readable,
                         "failure_code": failure_codes[0] if failure_codes else None,
                         "failure_codes": failure_codes,
@@ -784,12 +776,10 @@ class ResearchPipeline:
                         ),
                         "open_access_url": bool(paper.pdf_url or paper.pdf_urls),
                     })
-            # Partial text is usable only with an explicit partial summary scope;
-            # it does not displace a complete candidate or count as complete.
-            partial = [attempted[paper_id] for paper_id in attempt_order
-                       if paper_id in attempted and not self._complete(attempted[paper_id])
-                       and self._readable(attempted[paper_id])]
-            analysis = (complete + partial)[:run.top_k]
+            # A downloaded PDF keeps its place even if conversion is partial or
+            # fails. Summary scope and fulltext_count still reflect real quality.
+            analysis = acquired[:run.top_k]
+            complete = [paper for paper in analysis if self._complete(paper)]
             analysis_ids = {paper.paper_id for paper in analysis}
             for paper in initial:
                 provenance = paper.metadata.get("fulltext_provenance", {})
@@ -814,11 +804,14 @@ class ResearchPipeline:
                     if item["in_analysis"] and not item["complete"]
                 ],
                 fulltext_count=len(complete),
+                pdf_acquired_count=len(analysis),
                 fulltext_attempt_limit_reached=bool(
                     self.settings.max_fulltext_attempts and remaining
-                    and len(complete) < run.top_k),
+                    and len(analysis) < run.top_k),
                 replacement_candidates_remaining=[p.paper_id for p in remaining],
-                partial_fulltext_count=sum(not self._complete(p) for p in analysis),
+                partial_fulltext_count=sum(
+                    self._readable(p) and not self._complete(p) for p in analysis
+                ),
             )
             for paper in attempted.values():
                 _add_errors(run, paper.errors)

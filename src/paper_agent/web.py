@@ -145,7 +145,7 @@ class Workbench:
     def settings(self) -> Settings:
         values = self.preferences
         return replace(
-            self.base, mode="live",
+            self.base, mode="live", ranker="semantic",
             llm_base_url=values.get("base_url", self.base.llm_base_url),
             llm_model=values.get("model", self.base.llm_model),
             llm_api_key=values.get("api_key", self.base.llm_api_key),
@@ -182,7 +182,7 @@ class Workbench:
         if set(values) - allowed:
             raise UIError("模型设置包含不支持的字段。")
         updated = dict(self.preferences)
-        for key, low, high in (("default_top_k", 1, min(15, self.base.candidate_limit)),
+        for key, low, high in (("default_top_k", 1, 15),
                                ("concurrency", 1, 8), ("llm_timeout", 5, 600),
                                ("http_timeout", 5, 300)):
             if key in values:
@@ -598,8 +598,6 @@ class Workbench:
         settings = replace(base_settings, mode=mode,
                            processing="serial" if resolved == "sequential" else "concurrent")
         settings.validate()
-        if top_k > settings.candidate_limit:
-            raise UIError("论文数量超过当前候选上限，请调低 Top-k。")
         if mode == "live" and not settings.llm_api_key:
             raise UIError("请先打开模型设置，填写 DeepSeek API Key。", 409)
         timestamp, job_id = now(), uuid4().hex

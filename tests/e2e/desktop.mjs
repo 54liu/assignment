@@ -44,9 +44,16 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   await expect(page.getByRole('main', { name: '研究对话' })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole('heading', { name: '从一个研究问题开始' })).toBeVisible();
+  const parallelSwitch = page.getByRole('switch', { name: '并行优化' });
+  await expect(parallelSwitch).not.toBeChecked();
+  await parallelSwitch.focus();
+  await page.keyboard.press('Space');
+  await expect(parallelSwitch).toBeChecked();
+  await parallelSwitch.uncheck();
+  report.checks.push('parallel-switch-visible-keyboard-operable-and-off-by-default');
   const info = await page.evaluate(() => window.paperAgent.info());
   assert.equal(info.api_version, 3);
-  assert.equal(info.version, '0.3.0');
+  assert.equal(info.version, '1.0.0');
   assert.equal(path.resolve(info.data_root), profile);
   assert.equal('token' in info, false);
   const isolation = await page.evaluate(() => ({ node: typeof window.require, process: typeof window.process,
@@ -247,8 +254,12 @@ try {
 
   await page.getByRole('tab', { name: /^论文。/ }).click();
   await expect(page.locator('.paper-row').first()).toBeVisible({ timeout: 15_000 });
-  await page.getByRole('button', { name: /^打开论文详情：/ }).first().click();
+  await page.getByRole('button', { name: /^阅读论文：/ }).first().click();
   await expect(page.locator('.reader-view')).toBeVisible();
+  await page.getByRole('tab', { name: '原文 Markdown', exact: true }).click();
+  await expect(page.getByRole('tabpanel', { name: '原文 Markdown', exact: true })).toContainText('synthetic development fixture');
+  await page.getByRole('tab', { name: 'PDF 原文', exact: true }).click();
+  await expect(page.locator('canvas.pdf-canvas')).toBeVisible();
   await page.getByRole('tab', { name: /^研究报告。/ }).click();
   await expect(page.locator('.report-view')).toBeVisible();
   const artifact = finished.artifacts.find(a => a.kind === 'report' || (a.kind === 'markdown' && /report/i.test(a.name)));
@@ -273,15 +284,10 @@ try {
   assert.equal(blocked, true);
   report.checks.push('paper-detail-report-artifact-export-copy-url-validation');
 
-  // Report state, summary scope and citation must stay distinguishable on the
-  // desktop surface: the fixture report is partial (one demo summary) yet
-  // passes validation, so state, status and validity chips must differ.
-  const reportChips = await page.locator('.report-status-row .status-chip').allTextContents();
-  assert.ok(reportChips.includes('部分结果报告'), `unexpected report state chips: ${reportChips.join(' | ')}`);
-  assert.ok(reportChips.includes('报告有效'), `missing validity chip: ${reportChips.join(' | ')}`);
-  assert.ok(reportChips.includes('已完成'), `missing execution status chip: ${reportChips.join(' | ')}`);
-  const scopeChips = await page.locator('.report-scope-line span').allTextContents();
-  assert.ok(scopeChips.some(chip => chip.includes('演示样例')), `unexpected scope chips: ${scopeChips.join(' | ')}`);
+  // Readable report body and the persisted fixture scope remain available
+  // without restoring the removed diagnostic/status chip stack.
+  await expect(page.locator('.report-state-note')).toBeVisible();
+  assert.equal(finished.result.summaries[0].summary_scope, 'demo_fixture');
   const renderedReport = await page.locator('.report-markdown').innerText();
   assert.match(renderedReport, /论文比较/);
   assert.match(renderedReport, /比较 1/);
@@ -292,31 +298,20 @@ try {
   const finalRows = page.locator('.paper-section[aria-labelledby="effective-papers-title"] .paper-row');
   await expect(finalRows).toHaveCount(1);
   assert.equal(await page.locator('.paper-section[aria-labelledby="effective-papers-title"] .paper-rank').innerText(), '1');
-  const paperTags = await page.locator('.paper-section[aria-labelledby="effective-papers-title"] .paper-tags').first().innerText();
+  const paperTags = await page.locator('.paper-section[aria-labelledby="effective-papers-title"] .paper-material').first().innerText();
   assert.ok(paperTags.includes('演示样例'), `summary scope tag missing: ${paperTags}`);
-  assert.ok(paperTags.includes('全文完整'), `fulltext tag missing: ${paperTags}`);
-  assert.ok(paperTags.includes('报告已引用'), `report citation tag missing: ${paperTags}`);
+  assert.ok(paperTags.includes('PDF 原文可读'), `PDF availability missing: ${paperTags}`);
   // Restore the report tab so this block leaves the dock as it found it.
   await page.getByRole('tab', { name: /^研究报告。/ }).click();
   await expect(page.locator('.report-view')).toBeVisible();
   report.checks.push('report-validity-scope-readable-comparison-stable-numbering');
-  const benchmarkPath = path.join(output, 'fixture-benchmark.json');
-  await writeFile(benchmarkPath, JSON.stringify({
-    metadata: { synthetic: true, data_mode: 'demo', repeats_per_mode: 1, input_sha256: 'fixture' },
-    rows: ['sequential', 'concurrent'].map(execution_mode => ({ execution_mode, repeat: 1,
-      inputs_match: true, input_sha256: 'fixture', elapsed_seconds: execution_mode === 'sequential' ? 2 : 1 })),
-    summary: { performance_validated: false, sequential: { attempts: 1, median_seconds: 2, mean_seconds: 2 },
-      concurrent: { attempts: 1, median_seconds: 1, mean_seconds: 1 } },
-  }));
-  await app.evaluate(({ dialog }, benchmarkPath) => {
-    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [benchmarkPath] });
-  }, benchmarkPath);
   await page.getByRole('button', { name: '添加 Dock 面板' }).click();
   await page.getByRole('menuitem', { name: '性能数据' }).click();
-  await page.getByRole('button', { name: '导入 JSON', exact: true }).click();
-  await expect(page.getByText('仅显示原始测量，不提供真实性能结论。', { exact: false })).toBeVisible();
-  await expect(page.locator('.benchmark-chart')).toBeVisible();
-  report.checks.push('native-benchmark-import-chart-synthetic-no-performance-claim');
+  await expect(page.getByRole('region', { name: '运行时间', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: '运行时间', exact: true })).toContainText('并行');
+  await expect(page.getByRole('region', { name: '语义检索 Top-1', exact: true })).toContainText('暂无相关性记录');
+  await expect(page.getByRole('region', { name: '任务 Agent 筛选 Top-1', exact: true })).toContainText(finished.result.selected_papers[0].title);
+  report.checks.push('current-task-top-k-relevance-and-duration');
   await page.getByRole('button', { name: '新建会话', exact: true }).click();
   const finishedPaperTitle = finished.result.selected_papers[0].title;
   await page.locator('.dock-tab').filter({ hasText: finishedPaperTitle }).first().click();
@@ -324,10 +319,12 @@ try {
   await expect(page.getByText('该论文不在所属任务结果中')).toHaveCount(0);
   report.checks.push('paper-tab-restores-own-job-after-conversation-switch');
   await page.getByRole('tab', { name: /^研究报告。/ }).click();
+  await parallelSwitch.check();
   await page.screenshot({ path: path.join(output, 'desktop-wide.png') });
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1024, 720));
   await expect(page.locator('.workspace-stacked')).toBeVisible();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await parallelSwitch.uncheck();
   await page.screenshot({ path: path.join(output, 'desktop-compact.png') });
   await page.getByRole('button', { name: '收起侧栏', exact: true }).click();
   await expect(page.locator('.sidebar')).toHaveClass(/sidebar-compact/);

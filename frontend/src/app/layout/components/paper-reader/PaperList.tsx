@@ -34,7 +34,7 @@ export function PaperList() {
         <div><span className="eyebrow">本次研究</span><h2>关键论文</h2></div>
         {finalPapers.length > 0 && <span className="paper-count">{finalPapers.length} 篇</span>}
       </div>
-      <p className="panel-subtitle">点击论文进入研究笔记；有 PDF 原文时可直接切换阅读。</p>
+      <p className="panel-subtitle">查看研究笔记、原文 Markdown 和 PDF 原文。</p>
       {finalPapers.length > 0 && <section className="paper-section" aria-labelledby="effective-papers-title">
         <h3 id="effective-papers-title" className="sr-only">实际分析论文</h3>
         {finalPapers.map((paper, index) => <PaperRow

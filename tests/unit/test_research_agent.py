@@ -600,6 +600,23 @@ def test_brief_builds_traceable_result_without_mutating_inputs():
     )
 
 
+def test_brief_deduplicates_citation_and_attribution_variants_without_losing_contrasts():
+    papers, summaries, report = brief_inputs(count=1)
+    positive = "作者报告所提框架相比基线 LLM 降低幻觉并改善校准（f12）"
+    variant = "所提框架相比基线LLM降低幻觉并改善校准"
+    negative = "所提框架相比基线LLM未降低幻觉并改善校准"
+    summaries[0].findings = [positive, variant, negative]
+    summaries[0].evidence = [
+        EvidenceReference(paper_id="p1", claim=positive, quote="A fixture positive result."),
+        EvidenceReference(paper_id="p1", claim=negative, quote="A fixture contrasting result."),
+    ]
+    brief, _ = build_research_brief(papers=papers, summaries=summaries, report=report)
+    assert [finding.statement for finding in brief.findings] == [
+        "作者报告所提框架相比基线 LLM 降低幻觉并改善校准", negative,
+    ]
+    assert len(summaries[0].findings) == 3
+
+
 @pytest.mark.parametrize("scope", ["abstract_only", "partial_fulltext"])
 def test_brief_preserves_reading_scope_as_preliminary(scope):
     papers, summaries, report = brief_inputs(scope=scope)

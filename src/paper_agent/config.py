@@ -7,6 +7,8 @@ from typing import Literal
 
 from dotenv import load_dotenv
 
+SELECTOR_CANDIDATE_LIMIT = 20
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -15,12 +17,12 @@ class Settings:
     processing: Literal["serial", "concurrent"] = "serial"
     concurrency: int = 3
     source_limit: int = 20
-    candidate_limit: int = 15
+    candidate_limit: int = SELECTOR_CANDIDATE_LIMIT
     merged_candidate_limit: int = 0
-    selector_input_token_budget: int = 0
+    selector_input_token_budget: int = 256000
     report_input_token_budget: int = 64000
     max_fulltext_attempts: int = 0
-    ranker: str = "keyword"
+    ranker: str = "semantic"
     llm_base_url: str = "https://api.deepseek.com"
     llm_api_key: str = field(default="", repr=False)
     llm_model: str = "deepseek-flash"
@@ -84,12 +86,12 @@ class Settings:
             processing=os.getenv("PAPER_AGENT_PROCESSING", "serial"),
             concurrency=int(os.getenv("PAPER_AGENT_CONCURRENCY", "3")),
             source_limit=int(os.getenv("PAPER_AGENT_SOURCE_LIMIT", "20")),
-            candidate_limit=int(os.getenv("PAPER_AGENT_CANDIDATE_LIMIT", "15")),
+            candidate_limit=int(os.getenv("PAPER_AGENT_CANDIDATE_LIMIT", str(SELECTOR_CANDIDATE_LIMIT))),
             merged_candidate_limit=int(os.getenv("PAPER_AGENT_MERGED_CANDIDATE_LIMIT", "0")),
-            selector_input_token_budget=int(os.getenv("PAPER_AGENT_SELECTOR_INPUT_TOKEN_BUDGET", "0")),
+            selector_input_token_budget=int(os.getenv("PAPER_AGENT_SELECTOR_INPUT_TOKEN_BUDGET", "256000")),
             report_input_token_budget=int(os.getenv("PAPER_AGENT_REPORT_INPUT_TOKEN_BUDGET", "64000")),
             max_fulltext_attempts=int(os.getenv("PAPER_AGENT_MAX_FULLTEXT_ATTEMPTS", "0")),
-            ranker=os.getenv("PAPER_AGENT_RANKER", "keyword"),
+            ranker=os.getenv("PAPER_AGENT_RANKER", "semantic"),
             llm_base_url=_preferred_env("LLM_BASE_URL", "DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/"),
             llm_api_key=_preferred_env("LLM_API_KEY", "DEEPSEEK_API_KEY", ""),
             llm_model=_preferred_env("LLM_MODEL", "DEEPSEEK_MODEL", "deepseek-flash"),
@@ -143,8 +145,6 @@ class Settings:
             raise ValueError("Source/candidate limits must be between 1 and 100")
         if not 0 <= self.merged_candidate_limit <= 100:
             raise ValueError("Merged candidate limit must be 0 or between 1 and 100")
-        if self.merged_candidate_limit and self.merged_candidate_limit < self.top_k:
-            raise ValueError("Merged candidate limit must accommodate Top-k")
         if min(self.selector_input_token_budget, self.report_input_token_budget,
                self.max_fulltext_attempts) < 0:
             raise ValueError("Selector/report budgets and fulltext attempts must be nonnegative")

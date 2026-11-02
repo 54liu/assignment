@@ -38,8 +38,9 @@ test('research brief keeps at most three supported findings without placeholders
 
 test('preferred paper count and the parallel optimization switch remain explicit in the composer', () => {
   const conversation = source('layout/components/conversation/Conversation.tsx');
-  for (const count of [3, 5, 8]) assert.match(conversation, new RegExp(`value=\\{${count}\\}`));
-  assert.match(conversation, /aria-label="精选论文数量"/);
+  const countSelect = source('layout/components/conversation/PaperCountSelect.tsx');
+  assert.match(countSelect, /\[3, 5, 8\]/);
+  assert.match(countSelect, /aria-label="精选论文数量"/);
   assert.match(conversation, /高级设置/);
   assert.match(conversation, /role="switch" aria-label="并行优化"/);
   assert.match(conversation, /event.target.checked \? 'parallel' : 'sequential'/);
@@ -51,6 +52,29 @@ test('preferred paper count and the parallel optimization switch remain explicit
   assert.equal(requestedExecutionMode('auto'), 'sequential');
   assert.equal(requestedExecutionMode('parallel'), 'parallel');
   assert.equal(requestedExecutionMode('concurrent'), 'parallel');
+});
+
+test('paper title citations cover old reports without rewriting URLs, code or machine references', () => {
+  const { paperTitleCitations } = load('utils/paperCitations.ts');
+  const papers = [
+    { paper_id: 'arxiv:2604.17293', title: 'Beyond I Don’t Know' },
+    { paper_id: 'openalex:W7148253449', title: 'Truth-Aligned Uncertainty' },
+  ];
+  const input = '[arxiv:2604.17293] 对比 openalex:W7148253449。\n\n'
+    + '- [arxiv:2604.17293] Beyond I Don’t Know\n\n'
+    + '[arxiv:2604.17293](https://example.org/arxiv:2604.17293)\n\n'
+    + '`arxiv:2604.17293`\n\n[arxiv:2604.172930]';
+  const output = paperTitleCitations(input, papers);
+  assert.ok(output.includes('《Beyond I Don’t Know》 对比 Truth-Aligned Uncertainty'));
+  assert.ok(output.includes('- 《Beyond I Don’t Know》\n'));
+  assert.ok(!output.includes('《Beyond I Don’t Know》 Beyond I Don’t Know'));
+  assert.ok(output.includes('[Beyond I Don’t Know](https://example.org/arxiv:2604.17293)'));
+  assert.ok(output.includes('`arxiv:2604.17293`'));
+  assert.ok(output.includes('[arxiv:2604.172930]'));
+  assert.equal(papers[0].paper_id, 'arxiv:2604.17293');
+  const { readableReportMarkdown } = load('utils/reportMarkdown.ts');
+  const dynamic = '# 如何选择拒答机制\n\n## 决策建议\n\n先比较风险控制条件。';
+  assert.equal(readableReportMarkdown(dynamic, [{ paper_ids: ['arxiv:2604.17293'], method: 'some metadata' }], papers), dynamic);
 });
 
 test('all three delivery states stay separate from execution completion', () => {

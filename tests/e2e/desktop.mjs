@@ -51,6 +51,21 @@ try {
   await expect(parallelSwitch).toBeChecked();
   await parallelSwitch.uncheck();
   report.checks.push('parallel-switch-visible-keyboard-operable-and-off-by-default');
+  const paperCount = page.getByRole('button', { name: '精选论文数量', exact: true });
+  await paperCount.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('listbox', { name: '精选论文数量选项' })).toBeVisible();
+  await page.keyboard.press('End');
+  await page.keyboard.press('Enter');
+  await expect(paperCount).toContainText('8');
+  await expect(paperCount).toBeFocused();
+  await paperCount.click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('listbox')).toHaveCount(0);
+  await paperCount.click();
+  await page.getByRole('option', { name: '3 篇论文', exact: true }).click();
+  await expect(paperCount).toContainText('3');
+  report.checks.push('paper-count-popup-keyboard-selection-escape-and-focus-return');
   const info = await page.evaluate(() => window.paperAgent.info());
   assert.equal(info.api_version, 3);
   assert.equal(info.version, '1.0.0');
@@ -123,6 +138,29 @@ try {
   await expect(page.getByLabel('模型名称', { exact: true })).toHaveValue('e2e-local-persisted');
   assert.equal((await page.evaluate(() => Object.keys(localStorage))).every(key => /layout/.test(key)), true);
   report.checks.push('settings-persist-reload-keys-write-only-layout-only-storage');
+
+  // Appearance is independent of backend/model configuration and persists locally.
+  const themeGroup = page.getByRole('radiogroup', { name: '界面主题', exact: true });
+  await expect(themeGroup.getByRole('radio', { name: '跟随系统', exact: true })).toBeChecked();
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await themeGroup.getByRole('radio', { name: '浅色', exact: true }).check();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim()), '#f5f3ee');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await themeGroup.getByRole('radio', { name: '深色', exact: true }).check();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim()), '#161513');
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(themeGroup.getByRole('radio', { name: '深色', exact: true })).toBeChecked();
+  await themeGroup.getByRole('radio', { name: '跟随系统', exact: true }).check();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.emulateMedia({ colorScheme: null });
+  assert.equal((await page.evaluate(() => window.paperAgent.config())).model, 'e2e-local-persisted');
+  report.checks.push('theme-system-light-dark-overrides-persistence-and-model-config-isolation');
 
   // Closing the dock must preserve the mounted panel state, not discard edits.
   const baseUrlInput = page.getByLabel('API Base URL', { exact: true });
@@ -269,7 +307,8 @@ try {
   // v0.2.2 second iteration: the comparison section must stay readable Markdown
   // in the stored artifact instead of leaking raw JSON records.
   assert.match(text.text, /## 论文比较/);
-  assert.match(text.text, /### 比较 1：\[demo:001\]/);
+  assert.ok(text.text.includes(finished.result.summaries[0].title));
+  assert.ok(!text.text.includes('[demo:001]'), 'reading artifact should cite the paper title');
   assert.ok(!text.text.includes('"paper_ids"'), 'report comparison must not leak raw JSON');
   await app.evaluate(({ dialog }, exportPath) => {
     dialog.showSaveDialog = async () => ({ canceled: false, filePath: exportPath });
@@ -286,7 +325,7 @@ try {
 
   // Readable report body and the persisted fixture scope remain available
   // without restoring the removed diagnostic/status chip stack.
-  await expect(page.locator('.report-state-note')).toBeVisible();
+  await expect(page.locator('.report-state-note, .report-view .delivery-badge')).toHaveCount(0);
   assert.equal(finished.result.summaries[0].summary_scope, 'demo_fixture');
   const renderedReport = await page.locator('.report-markdown').innerText();
   assert.match(renderedReport, /论文比较/);

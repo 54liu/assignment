@@ -25,26 +25,26 @@ export async function runMockUiChecks(page, jobs) {
   await openScenario(page, 'success');
   await expect(page.getByText('Fixture finding 1', { exact: true })).toBeVisible();
   await expect(page.getByText('Fixture finding 3', { exact: true })).toBeVisible();
-  await expect(page.getByText('研究结果', { exact: true }).first()).toBeVisible();
+  await expect(page.locator('.research-brief .delivery-badge')).toHaveCount(0);
   await expect(page.getByText('Inspect fixture page two.', { exact: true })).toBeVisible();
   const successLog = await executionLog(page);
   await successLog.locator(':scope > summary').click();
   assert.equal(await successLog.evaluate(element => element.open), true);
 
   await openScenario(page, 'partial');
-  await expect(page.getByText('初步研究笔记', { exact: true }).first()).toBeVisible();
+  await expect(page.locator('.research-brief .delivery-badge, .brief-state-note')).toHaveCount(0);
   await expect(page.getByText('Fixture finding 1', { exact: true })).toBeVisible();
   await expect(page.getByText('Fixture finding 2', { exact: true })).toHaveCount(0);
   await expect(page.locator('.brief-limitations')).toHaveCount(0);
   await executionLog(page);
 
   await openScenario(page, 'no_result');
-  await expect(page.getByText('未形成结果', { exact: true }).first()).toBeVisible();
+  await expect(page.locator('.research-brief .delivery-badge')).toHaveCount(0);
   await expect(page.getByText('Provide readable source PDFs.', { exact: true })).toBeVisible();
   await expect(page.getByText('Fixture finding 1', { exact: true })).toHaveCount(0);
 
   await openScenario(page, 'retry_recovered');
-  await expect(page.getByText('研究结果', { exact: true }).first()).toBeVisible();
+  await expect(page.locator('.research-brief .delivery-badge')).toHaveCount(0);
   await expect(page.getByRole('main').getByText(/invalid_model_output/)).toHaveCount(0);
   const recoveredLog = await executionLog(page);
   await recoveredLog.locator(':scope > summary').click();
@@ -54,7 +54,7 @@ export async function runMockUiChecks(page, jobs) {
   await expect(recoveredLog.getByText(/retry recovered/i)).toBeVisible();
 
   await openScenario(page, 'retry_exhausted');
-  await expect(page.getByText('初步研究笔记', { exact: true }).first()).toBeVisible();
+  await expect(page.locator('.research-brief .delivery-badge, .brief-state-note')).toHaveCount(0);
   await expect(page.locator('.brief-limitations')).toHaveCount(0);
   const exhaustedLog = await executionLog(page);
   await exhaustedLog.locator(':scope > summary').click();

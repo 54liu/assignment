@@ -1,7 +1,7 @@
 import { ArrowUpRight, BookOpen, Search } from 'lucide-react';
 import type { Paper, Summary } from '../../../types/contracts';
 import { useWorkspaceState } from '../../../stores/workspaceStore';
-import { collectPapers, summaryScopeLabel, summaryStatus, summaryStatusLabel } from '../../../utils/papers';
+import { collectPapers } from '../../../utils/papers';
 import { layoutStore } from '../../stores/layoutStore';
 
 export function PaperList() {
@@ -74,10 +74,11 @@ function PaperRow({ paper, index, jobId, summary }: {
 
 function materialNote(paper: Paper, summary?: Summary): string {
   const hasPdf = Boolean(paper.pdf_artifact_id || paper.pdf_path);
-  const status = summaryStatus(summary);
   if (summary) {
-    const note = `${summaryStatusLabel(status)} · ${summaryScopeLabel(summary.summary_scope)}`;
-    return hasPdf ? `${note} · PDF 原文可读` : `${note} · PDF 原文缺失`;
+    const hasNote = Boolean(summary.deep_analysis?.trim() || summary.overview?.trim() || summary.markdown?.trim());
+    const note = summary.summary_scope === 'demo_fixture' ? '演示样例'
+      : summary.summary_scope === 'abstract_only' ? '摘要研究笔记' : hasNote ? '研究笔记可读' : '研究笔记未生成';
+    return hasPdf ? `${note} · PDF 原文可读` : note;
   }
   return hasPdf ? 'PDF 原文可读 · 研究笔记缺失' : '当前只提供论文元数据';
 }

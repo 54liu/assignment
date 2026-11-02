@@ -4,7 +4,8 @@ import type { Artifact, Job } from '../../../types/contracts';
 import type { LayoutTab } from '../../../types/ui';
 import { desktopApi } from '../../../services/desktopApi';
 import { useWorkspaceState, workspaceStore } from '../../../stores/workspaceStore';
-import { collectPapers, summaryScopeLabel, summaryStatus, summaryStatusLabel } from '../../../utils/papers';
+import { collectPapers, summaryStatus } from '../../../utils/papers';
+import { paperTitleCitations } from '../../../utils/paperCitations';
 import { safeHttpUrl } from '../../../utils/format';
 import { MarkdownContent } from '../common/MarkdownContent';
 import { PdfViewer } from './PdfViewer';
@@ -90,17 +91,17 @@ export function PaperReader({ tab }: { tab: LayoutTab }) {
   if (remoteError) return <div className="panel-empty"><span><FileText size={20}/></span><strong>所属任务暂时不可读取</strong><p>{remoteError}</p></div>;
   if (!paper) return <div className="panel-empty"><span><FileText size={20}/></span><strong>该论文不在所属任务结果中</strong><p>论文标签会保留最近打开的任务上下文；可在标签栏关闭后从当前结果重新打开。</p></div>;
 
-  const readingText = summary?.deep_analysis?.trim() || summary?.markdown || (paper.abstract ? `## 摘要\n\n${paper.abstract}` : '');
+  const citationPapers = [...collection.paperById.values(), ...(job?.result?.report?.references ?? [])];
+  const readingText = paperTitleCitations(summary?.deep_analysis?.trim() || summary?.markdown || (paper.abstract ? `## 摘要\n\n${paper.abstract}` : ''), citationPapers);
   const sourceUrl = safeHttpUrl(paper.paper_url);
   const derivedSummaryStatus = summaryStatus(summary);
   const analysisIds = collection.result?.metrics?.analysis_paper_ids;
   const analyzed = Array.isArray(analysisIds) && analysisIds.includes(paper.paper_id);
-  const summaryStatusText = summary
-    ? `${summaryStatusLabel(derivedSummaryStatus)} · ${summaryScopeLabel(summary.summary_scope)}`
-    : analyzed ? '总结缺失' : '未进入总结';
-  const summaryOverview = summary
+  const sourceNote = summary?.summary_scope === 'demo_fixture' ? '演示样例'
+    : summary?.summary_scope === 'abstract_only' ? '基于论文摘要的研究笔记' : '';
+  const summaryOverview = paperTitleCitations(summary
     ? (summary.overview?.trim() || summary.core_idea?.trim() || summary.relevance?.trim() || '')
-    : '';
+    : '', citationPapers);
 
   const copy = async () => {
     if (!readingText) return;
@@ -140,7 +141,7 @@ export function PaperReader({ tab }: { tab: LayoutTab }) {
     <header className="reader-header">
       <div className="reader-icon"><BookOpen size={17}/></div>
       <div className="reader-title">
-        <span>{summaryStatusText}</span>
+        {sourceNote && <span>{sourceNote}</span>}
         <h2 title={paper.title}>{paper.title}</h2>
         <p>{paper.authors.join(', ')}{paper.year ? ` · ${paper.year}` : ''}</p>
       </div>

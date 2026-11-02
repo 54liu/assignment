@@ -640,10 +640,6 @@ class ResearchPipeline:
             and not summary.errors
             and summary.overview.strip()
             and summary.deep_analysis.strip()
-            and summary.research_question.strip()
-            and summary.core_idea.strip()
-            and summary.relevance.strip()
-            and summary.evidence
         )
         return "complete" if complete else "usable_partial"
 
@@ -886,27 +882,9 @@ class ResearchPipeline:
                 and bool(summary.deep_analysis.strip())
                 for summary in run.summaries
             )
-            run.metrics["research_chunk_audit"] = {
-                paper_id: {
-                    key: value for key, value in (
-                        (paper.metadata.get("research_audit") or {}).get("chunks", {}) or {}
-                    ).items()
-                    if key in {"total", "selected", "valid", "failed", "unread", "failed_by_subreason", "repair_used"}
-                }
-                for paper_id, paper in by_id.items()
-                if isinstance(paper.metadata.get("research_audit"), dict)
-            }
-            run.metrics["merge_input_audit"] = {
-                paper_id: {
-                    key: value for key, value in (
-                        (paper.metadata.get("research_audit") or {}).get("merge", {}) or {}
-                    ).items()
-                    if key in {
-                        "input_estimator", "budget", "original", "submitted", "mode",
-                        "lossy", "loss_kinds", "coverage_gaps", "merge_called",
-                        "merge_completed", "failure_reason",
-                    }
-                }
+            run.metrics["analysis_strategy"] = "direct_paper_reports"
+            run.metrics["paper_analysis"] = {
+                paper_id: dict(paper.metadata["research_audit"])
                 for paper_id, paper in by_id.items()
                 if isinstance(paper.metadata.get("research_audit"), dict)
             }
@@ -932,6 +910,12 @@ class ResearchPipeline:
             start, before = time.perf_counter(), _usage(self.llm)
             self.store.event(run_id, "research_report", event="start", agent="llm_research_analyst",
                              synthetic=run.mode == "demo")
+            run.metrics["report_input_audit"] = {
+                "strategy": "complete_paper_reports", "compacted": False,
+                "reports": [{"paper_id": summary.paper_id, "markdown_chars": len(summary.markdown)}
+                            for summary in run.summaries
+                            if summary.summary_scope != "failed" and self._summary_has_content(summary)],
+            }
             try:
                 async with self._llm_gate:
                     run.report = await self.report(run.idea, run.summaries,

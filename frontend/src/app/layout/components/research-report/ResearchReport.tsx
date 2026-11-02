@@ -5,7 +5,8 @@ import { desktopApi } from '../../../services/desktopApi';
 import { useWorkspaceState, workspaceStore } from '../../../stores/workspaceStore';
 import { errorLabel } from '../../../utils/labels';
 import { readableReportMarkdown } from '../../../utils/reportMarkdown';
-import { deliveryStatusFor, deliveryStatusLabels, reportArtifactFor } from '../../../utils/researchBrief';
+import { reportArtifactFor } from '../../../utils/researchBrief';
+import { paperTitleCitations } from '../../../utils/paperCitations';
 import { MarkdownContent } from '../common/MarkdownContent';
 
 export function ResearchReport() {
@@ -22,8 +23,10 @@ export function ResearchReport() {
   const [exportedPath, setExportedPath] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const displayMarkdown = useMemo(
-    () => readableReportMarkdown(markdown, report?.comparison),
-    [markdown, report?.comparison],
+    () => readableReportMarkdown(markdown, report?.comparison, [
+      ...(result?.papers ?? []), ...(result?.selected_papers ?? []), ...(report?.references ?? []),
+    ]),
+    [markdown, report?.comparison, report?.references, result?.papers, result?.selected_papers],
   );
   const hasSubstance = reportHasSubstance(report, displayMarkdown);
 
@@ -94,20 +97,17 @@ export function ResearchReport() {
     container?.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  if (!report && !reportArtifact) return <div className="panel-empty"><span><FileText size={21}/></span><strong>研究报告尚未生成</strong><p>完成研究任务后，服务端返回的报告会在这里预览。失败和部分结果会按原状态保留。</p></div>;
+  if (!report && !reportArtifact) return <div className="panel-empty"><span><FileText size={21}/></span><strong>研究报告尚未生成</strong><p>研究完成后，可以在这里阅读和导出综合报告。</p></div>;
 
   const reportErrors = collectReportErrors(result, report);
-  const state = reportState(result, report, reportErrors, hasSubstance);
   const headings = markdownHeadings(displayMarkdown);
   const references = report?.references ?? [];
   const reportLimitations = (report?.limitations ?? []).filter(item =>
     !item.startsWith('部分报告：') && !item.startsWith('报告提示使用了') &&
     !item.startsWith('报告输入超过') && !item.startsWith('完整总结集'));
-  const delivery = deliveryStatusFor(result, job);
   return <article className="report-view">
-    <header className="report-header"><div><span className="eyebrow">研究产物</span><h2>{state.title}</h2><p>{job?.idea ?? conversation?.title ?? '当前会话'}</p></div><span className="report-file-mark"><FileText size={17}/></span></header>
-    <div className="report-status-row">{delivery && <span className={`delivery-badge delivery-${delivery}`}>{deliveryStatusLabels[delivery]}</span>}{references.length > 0 && <span className="report-meta">引用 {references.length} 篇</span>}</div>
-    <p className={`report-state-note ${state.tone === 'failed' ? 'is-error' : ''}`}>{state.note}</p>
+    <header className="report-header"><div><h2>综合研究报告</h2><p>{job?.idea ?? conversation?.title ?? '当前会话'}</p></div><span className="report-file-mark"><FileText size={17}/></span></header>
+    {references.length > 0 && <div className="report-status-row"><span className="report-meta">参考 {references.length} 篇论文</span></div>}
     <div className="report-actions">
       <button className="subtle-button" type="button" disabled={!displayMarkdown || !hasSubstance} onClick={() => void copyReport()}><Copy size={14}/>复制</button>
       {reportArtifact && <button className="subtle-button" type="button" onClick={() => void exportReport()}><Download size={14}/>导出</button>}
@@ -125,11 +125,10 @@ export function ResearchReport() {
     {loading ? <div className="reader-loading" aria-live="polite"><span className="skeleton-line wide"/><span className="skeleton-line"/><span className="skeleton-line medium"/></div>
       : !hasSubstance ? <section className="report-unavailable" role="status">
         <strong>暂无可读的综合正文</strong>
-        <p>{reportFailureNote(reportErrors, state.note)}</p>
-        <small>原始报告、错误记录、已有引用和真实任务产物仍保留；不会用整套空章节占位。</small>
+        <p>{reportFailureNote(reportErrors, '请查看执行记录，或稍后重新生成。')}</p>
       </section>
         : displayMarkdown ? <div ref={contentRef} className="report-markdown"><MarkdownContent text={displayMarkdown}/></div>
-          : report?.overview ? <div className="report-preview"><h3>报告概述</h3><p>{report.overview}</p>{reportLimitations.length ? <ul>{reportLimitations.map(limitation => <li key={limitation}>{limitation}</li>)}</ul> : null}</div>
+          : report?.overview ? <div className="report-preview"><h3>报告概述</h3><p>{paperTitleCitations(report.overview, references)}</p>{reportLimitations.length ? <ul>{reportLimitations.map(limitation => <li key={limitation}>{paperTitleCitations(limitation, references)}</li>)}</ul> : null}</div>
             : <div className="panel-empty compact-empty"><span><BookOpen size={19}/></span><strong>报告正文未随结果返回</strong><p>请检查活动记录中的报告生成状态和服务端错误。</p></div>}
     {truncated && <div className="inline-warning" role="status">报告超过 2 MiB，当前仅显示服务端返回的截断内容。</div>}
     {error && <div className="inline-error" role="alert">报告读取失败：{error}</div>}
@@ -147,53 +146,6 @@ function collectReportErrors(result: PipelineResult | null, report: PipelineResu
     output.push(item);
   }
   return output;
-}
-
-function reportState(
-  result: PipelineResult | null, report: PipelineResult['report'], errors: ContractError[],
-  hasSubstance = true,
-) {
-  const valid = result?.metrics?.report_valid;
-  const invalid = errors.some(item => ['invalid_model_output', 'llm_budget', 'llm_failed', 'persist_failed'].includes(item.code ?? ''));
-  const partial = errors.some(item => item.code === 'partial_report') || result?.status === 'partial';
-  const inputCompacted = errors.some(item => item.code === 'partial_report' && item.details?.reason === 'report_input_compacted')
-    || (report?.limitations ?? []).some(item => item.includes('有界摘录'));
-  if (!hasSubstance) {
-    return {
-      label: '无可读报告', tone: 'failed', title: '研究报告未生成',
-      note: '报告生成失败或未通过校验，没有可读的综合正文；已有错误、引用和真实产物仍保留。',
-    };
-  }
-  if (invalid) {
-    return {
-      label: '校验未通过', tone: 'failed', title: '部分研究报告',
-      note: '报告生成或严格校验未通过；以下内容按部分结果保留，缺失引用不会被补写为完整报告。',
-    };
-  }
-  if (inputCompacted && valid !== true) {
-    return {
-      label: '部分报告', tone: 'partial', title: '综合研究报告',
-      note: '报告提示使用了每篇总结的有界摘录，未包含完整字段；完整内容仍保存在单篇总结中，本次不按完整输入报告处理。',
-    };
-  }
-  if (partial) {
-    return valid === true
-      ? { label: '部分结果报告', tone: 'partial', title: '综合研究报告', note: '报告内容通过引用与结构校验，但输入总结仍不完整；图表和实验以单篇总结为准。' }
-      : { label: '部分报告', tone: 'partial', title: '部分研究报告', note: '报告只覆盖实际可用的单篇总结；输入不完整，未按完整报告处理。' };
-  }
-  if (valid === true) {
-    return { label: '完整报告', tone: 'completed', title: '综合研究报告', note: '报告已通过引用与结构校验，范围以实际成功总结的论文为准。' };
-  }
-  if (valid === false) {
-    return {
-      label: '未通过校验', tone: 'failed', title: '部分研究报告',
-      note: '报告未通过严格引用或结构校验，按部分结果保留；不会把未核验内容显示为完整报告。',
-    };
-  }
-  return {
-    label: partial ? '部分结果报告' : '状态未记录', tone: partial ? 'partial' : 'pending',
-    title: '研究报告', note: '这是旧记录或缺少 report_valid 指标；请以报告错误和单篇总结范围为准。',
-  };
 }
 
 function reportHasSubstance(

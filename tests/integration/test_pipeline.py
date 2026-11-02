@@ -36,6 +36,51 @@ def test_demo_runs_both_task_agents_and_persists_scopes(tmp_path):
     assert {timing.stage for timing in result.timings} == {"search", "selection", "fulltexts", "summarize", "report", "total"}
 
 
+@pytest.mark.parametrize(("processing", "expected_peak"), [("serial", 1), ("concurrent", 2)])
+def test_paper_reports_use_selected_execution_mode_and_all_finish_before_synthesis(
+    tmp_path, processing, expected_peak,
+):
+    class ReportModel(DemoLLM):
+        def __init__(self):
+            super().__init__()
+            self.active = 0
+            self.peak = 0
+            self.completed = set()
+            self.report_inputs = None
+
+        async def json(self, system, user):
+            payload = json.loads(user)
+            if payload.get("task") == "summarize_paper":
+                self.active += 1
+                self.peak = max(self.peak, self.active)
+                # Scheduling fixture only, not an actual performance measurement.
+                await asyncio.sleep(.01)
+                response = await super().json(system, user)
+                self.completed.add(payload["paper"]["paper_id"])
+                self.active -= 1
+                return {key: response[key] for key in ("overview", "deep_analysis", "findings")}
+            if payload.get("task") == "generate_research_report":
+                assert self.active == 0
+                assert self.completed == {item["paper_id"] for item in payload["summaries"]}
+                self.report_inputs = payload["summaries"]
+            return await super().json(system, user)
+
+    model = ReportModel()
+    result = asyncio.run(ResearchPipeline(
+        settings_for(tmp_path, processing=processing, llm_concurrency=2), llm=model,
+    ).run_research_pipeline("agent memory", 3, "agent memory"))
+    assert model.peak == expected_peak
+    assert len(model.completed) == 3
+    assert [item["markdown"] for item in model.report_inputs] == [summary.markdown for summary in result.summaries]
+    assert [call["task"] for call in model.call_log].count("summarize_paper") == 3
+    assert [call["task"] for call in model.call_log].count("generate_research_report") == 1
+    assert "research_chunk_audit" not in result.metrics
+    assert "merge_input_audit" not in result.metrics
+    assert result.metrics["analysis_strategy"] == "direct_paper_reports"
+    assert result.metrics["summary_status_counts"] == {"complete": 3}
+    assert result.metrics["report_input_audit"]["compacted"] is False
+
+
 def test_original_selection_survives_ordered_replacement(tmp_path):
     async def fail_first(paper, *, settings):
         if paper.paper_id == "demo:001":

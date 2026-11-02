@@ -1,11 +1,20 @@
-import { useEffect, useState } from 'react';
-import { Check, Eye, EyeOff, FolderOpen, LoaderCircle, LockKeyhole, Save, ShieldCheck, Trash2 } from 'lucide-react';
+import { useEffect, useId, useState } from 'react';
+import { Check, Eye, EyeOff, FolderOpen, LoaderCircle, LockKeyhole, Monitor, Moon, Save, ShieldCheck, Sun, Trash2 } from 'lucide-react';
 import type { ConfigUpdate, PublicConfig } from '../../../types/contracts';
 import { desktopApi } from '../../../services/desktopApi';
 import { useWorkspaceState, workspaceStore } from '../../../stores/workspaceStore';
+import { layoutStore, useLayoutState } from '../../stores/layoutStore';
+
+const themes = [
+  { value: 'system', label: '跟随系统', icon: Monitor },
+  { value: 'light', label: '浅色', icon: Sun },
+  { value: 'dark', label: '深色', icon: Moon },
+] as const;
 
 export function SettingsPanel() {
   const { config, serviceInfo } = useWorkspaceState();
+  const { theme } = useLayoutState();
+  const themeId = useId();
   const [baseUrl, setBaseUrl] = useState('https://api.deepseek.com');
   const [model, setModel] = useState('deepseek-flash');
   const [proxy, setProxy] = useState('');
@@ -85,7 +94,16 @@ export function SettingsPanel() {
 
   return <div className="settings-view">
     <header className="panel-intro"><div><span className="eyebrow">本机配置</span><h2>设置</h2></div><span className="settings-safe"><ShieldCheck size={14}/>密钥不回显</span></header>
-    <p className="panel-subtitle">保存连接参数不会验证密钥，也不会启动研究任务。</p>
+    <p className="panel-subtitle">主题立即生效；连接参数修改后需点击保存。</p>
+    <section className="settings-section" aria-label="外观">
+      <div className="settings-section-head"><div><h3>外观</h3><p>选择界面主题，自动保存。</p></div></div>
+      <div className="theme-options" role="radiogroup" aria-label="界面主题">
+        {themes.map(({ value, label, icon: Icon }) => <label key={value} className="theme-choice">
+          <input type="radio" name={themeId} value={value} checked={theme === value} onChange={() => layoutStore.setTheme(value)}/>
+          <Icon size={17} aria-hidden="true"/><span>{label}</span>
+        </label>)}
+      </div>
+    </section>
     <section className="settings-section">
       <div className="settings-section-head"><div><h3>DeepSeek</h3><p>研究与讨论使用的模型服务。</p></div><span className={`configured-pill ${config.api_key_configured ? 'is-ready' : ''}`}><i/>{config.api_key_configured ? '已配置' : '待配置'}</span></div>
       <form className="settings-form" onSubmit={event => void save(event)}>
